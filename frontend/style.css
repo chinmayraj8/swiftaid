@@ -160,6 +160,7 @@ body {
 .badge-critical { background: rgba(255, 51, 51, 0.2); color: #ff4d4d; border: 1px solid #ff4d4d; }
 .badge-high { background: rgba(255, 165, 0, 0.2); color: #ffa500; border: 1px solid #ffa500; }
 .badge-medium { background: rgba(255, 215, 0, 0.2); color: #ffd700; border: 1px solid #ffd700; }
+.badge-low { background: rgba(46, 160, 67, 0.2); color: #2ea043; border: 1px solid #2ea043; }
 
 /* Large SOS Button */
 .sos-btn-fixed {

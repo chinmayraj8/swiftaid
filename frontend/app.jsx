@@ -37,20 +37,24 @@ const TopNav = () => {
     );
 };
 
-const Sidebar = () => (
+const Sidebar = ({ incidents }) => (
     <div className="sidebar">
         <h2>Active Emergencies</h2>
         <div className="incidents-list">
-            {MOCK_INCIDENTS.map(inc => (
-                <div key={inc.id} className="incident-card">
-                    <div className="card-header">
-                        <span className="card-type">{inc.type}</span>
-                        <span className={`badge badge-${inc.severity}`}>{inc.severity}</span>
+            {incidents.length === 0 ? (
+                <div style={{color: '#8b949e', padding: '20px', textAlign: 'center'}}>No active dispatches. Type SOS to start.</div>
+            ) : (
+                incidents.map((inc, i) => (
+                    <div key={i} className="incident-card">
+                        <div className="card-header">
+                            <span className="card-type" style={{textTransform: 'capitalize'}}>{inc.type}</span>
+                            <span className={`badge badge-${inc.severity}`}>{inc.severity}</span>
+                        </div>
+                        <div className="card-loc"><i data-lucide="map-pin" style={{width: 14, height: 14, marginRight: 4}}></i>{inc.loc}</div>
+                        <div className="card-time">{inc.time}</div>
                     </div>
-                    <div className="card-loc"><i data-lucide="map-pin" style={{width: 14, height: 14, marginRight: 4}}></i>{inc.loc}</div>
-                    <div className="card-time">{inc.time}</div>
-                </div>
-            ))}
+                ))
+            )}
         </div>
     </div>
 );
@@ -60,164 +64,318 @@ const App = () => {
     const mapRef = useRef(null);
     const mapInstance = useRef(null);
     const ambulanceMarker = useRef(null);
+    const markersRef = useRef([]); 
+    const routePolyline = useRef(null);
+    
+    const [activeEmergencies, setActiveEmergencies] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isDispatching, setIsDispatching] = useState(false);
     const [corridorActive, setCorridorActive] = useState(false);
-    const [eta, setEta] = useState(null); // '08:30'
+    const [corridorMessage, setCorridorMessage] = useState('Green Corridor Activated — Signals Cleared');
+    const [eta, setEta] = useState(''); 
     const [etaSeconds, setEtaSeconds] = useState(0);
 
     // Initialize Map
     useEffect(() => {
-        if (!mapInstance.current) {
-            mapInstance.current = L.map(mapRef.current, { zoomControl: false }).setView([STATION_LAT, STATION_LNG], 13);
-            L.control.zoom({ position: 'topright' }).addTo(mapInstance.current);
+        if (!mapInstance.current && window.google) {
+            const darkMapStyle = [
+              { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+              { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
+              { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
+              { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+              { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
+              { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
+              { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] }
+            ];
 
-            // Esri Satellite Tiles
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                attribution: 'Tiles &copy; Esri'
-            }).addTo(mapInstance.current);
-
-            // Blue Ambulance Station
-            const ambIcon = L.divIcon({ className: 'marker-ambulance', iconSize: [24,24] });
-            ambulanceMarker.current = L.marker([STATION_LAT, STATION_LNG], { icon: ambIcon }).addTo(mapInstance.current);
-
-            // Severity-Segregated Pulsing Incidents
-            MOCK_INCIDENTS.forEach(inc => {
-                let markerClass = 'marker-medium';
-                if (inc.severity === 'critical') markerClass = 'marker-critical';
-                else if (inc.severity === 'high') markerClass = 'marker-high';
-
-                const dynamicIcon = L.divIcon({ className: markerClass, iconSize: [20,20] });
-                L.marker([inc.lat, inc.lng], { icon: dynamicIcon }).addTo(mapInstance.current);
+            mapInstance.current = new window.google.maps.Map(mapRef.current, {
+                center: { lat: STATION_LAT, lng: STATION_LNG },
+                zoom: 13,
+                disableDefaultUI: true,
+                zoomControl: true,
+                styles: darkMapStyle
             });
 
-            // Fix map incomplete loading (grey tiles issue in React)
-            setTimeout(() => {
-                mapInstance.current.invalidateSize();
-            }, 500);
+            const trafficLayer = new window.google.maps.TrafficLayer();
+            trafficLayer.setMap(mapInstance.current);
+
+            ambulanceMarker.current = new window.google.maps.Marker({
+                position: { lat: STATION_LAT, lng: STATION_LNG },
+                map: mapInstance.current,
+                icon: {
+                    path: window.google.maps.SymbolPath.CIRCLE,
+                    scale: 12,
+                    fillColor: '#3388ff',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 3,
+                },
+                zIndex: 999
+            });
         }
     }, []);
 
-    // Lucide Icons initialization
     useEffect(() => {
         lucide.createIcons();
-    }, [isModalOpen, corridorActive]);
+    }, [isModalOpen, corridorActive, corridorMessage, activeEmergencies]);
 
-    // Handle Dispatch Flow
-    const handleDispatch = (text) => {
+    const handleDispatch = async (text) => {
         setIsDispatching(true);
-        setTimeout(() => {
+        try {
+            const response = await fetch('http://localhost:8000/dispatch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await response.json();
+            
+            const newIncident = {
+                type: data.result.incident_type,
+                loc: data.result.location_name,
+                severity: data.result.severity,
+                time: new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false }) + ' IST'
+            };
+            setActiveEmergencies(prev => [newIncident, ...prev]);
+
             setIsDispatching(false);
             setIsModalOpen(false);
-            startGreenCorridor();
-        }, 2000);
-    };
-
-    const startGreenCorridor = () => {
-        setCorridorActive(true);
-        setEtaSeconds(8 * 60 + 30); // 8:30
-
-        const destLat = MOCK_INCIDENTS[0].lat;
-        const destLng = MOCK_INCIDENTS[0].lng;
-
-        // Draw green polyline (Mocking a route)
-        // Simple straight line with a curve for hackathon demo purposes
-        const midLat = STATION_LAT + (destLat - STATION_LAT)/2 + 0.01;
-        const midLng = STATION_LNG + (destLng - STATION_LNG)/2;
-        const routePoints = [
-            [STATION_LAT, STATION_LNG],
-            [midLat, midLng],
-            [destLat, destLng]
-        ];
-
-        const routeLine = L.polyline(routePoints, {
-            color: '#2ea043', weight: 6, dashArray: '10, 10', className: 'route-anim'
-        }).addTo(mapInstance.current);
-        
-        mapInstance.current.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
-
-        // Animate marker along the line simply using interval
-        let step = 0;
-        const totalSteps = 100; // takes about 10 seconds visually
-        
-        const deltaLat1 = (midLat - STATION_LAT) / (totalSteps/2);
-        const deltaLng1 = (midLng - STATION_LNG) / (totalSteps/2);
-        
-        const deltaLat2 = (destLat - midLat) / (totalSteps/2);
-        const deltaLng2 = (destLng - midLng) / (totalSteps/2);
-
-        const animInterval = setInterval(() => {
-            step++;
-            let cLat, cLng;
-            if (step <= totalSteps/2) {
-                cLat = STATION_LAT + deltaLat1 * step;
-                cLng = STATION_LNG + deltaLng1 * step;
-            } else {
-                const s2 = step - Math.floor(totalSteps/2);
-                cLat = midLat + deltaLat2 * s2;
-                cLng = midLng + deltaLng2 * s2;
-            }
-            
-            ambulanceMarker.current.setLatLng([cLat, cLng]);
-
-            if (step >= totalSteps) {
-                clearInterval(animInterval);
-                // Snap to end
-                ambulanceMarker.current.setLatLng([destLat, destLng]);
-            }
-        }, 50); // super fast visual 5s animation over route
-    };
-
-    // ETA Timer countdown logic (fast simulated countdown from 08:30 to 04:15)
-    useEffect(() => {
-        if (corridorActive && etaSeconds > 0) {
-            const stopPoint = 4 * 60 + 15; // 04:15 is the goal where we stop simulation timer
-            
-            const timer = setInterval(() => {
-                setEtaSeconds(prev => {
-                    if (prev <= stopPoint) {
-                        clearInterval(timer);
-                        return stopPoint;
-                    }
-                    // Count down faster than reality for hackathon demo
-                    return prev - 8; 
-                });
-            }, 100);
-
-            return () => clearInterval(timer);
+            startGreenCorridor(data.result);
+        } catch (e) {
+            console.error(e);
+            setIsDispatching(false);
+            alert("Backend dispatch failed. Ensure the python backend is running on port 8000.");
         }
-    }, [corridorActive]);
+    };
 
-    // Format ETA
+    const driveTo = (origin, destination, isHospitalLeg, callback) => {
+        const directionsService = new window.google.maps.DirectionsService();
+
+        directionsService.route({
+            origin: origin,
+            destination: destination,
+            travelMode: window.google.maps.TravelMode.DRIVING,
+        }, (response, status) => {
+            if (status === 'OK') {
+                const route = response.routes[0].overview_path;
+                
+                if (routePolyline.current) {
+                    routePolyline.current.setMap(null);
+                }
+
+                routePolyline.current = new window.google.maps.Polyline({
+                    path: route,
+                    geodesic: true,
+                    strokeColor: isHospitalLeg ? '#3388ff' : '#2ea043',
+                    strokeOpacity: 1.0,
+                    strokeWeight: 6,
+                    map: mapInstance.current
+                });
+
+                const pathLength = route.length;
+                const numSignals = isHospitalLeg ? 4 : 6;
+                const signalMarkers = [];
+                for(let i=1; i<=numSignals; i++) {
+                    const idx = Math.floor((pathLength / (numSignals + 1)) * i);
+                    const pt = route[idx];
+                    
+                    const sigMarker = new window.google.maps.Marker({
+                        position: pt,
+                        map: mapInstance.current,
+                        icon: {
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#ff3333', // RED initially
+                            fillOpacity: 1,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 2,
+                        },
+                        title: "Traffic Signal (Ready)"
+                    });
+                    markersRef.current.push(sigMarker);
+                    signalMarkers.push({ marker: sigMarker, cleared: false });
+                }
+
+                const bounds = new window.google.maps.LatLngBounds();
+                route.forEach(p => bounds.extend(p));
+                mapInstance.current.fitBounds(bounds, { padding: 50 });
+
+                let currentPathIdx = 0;
+                let currentSegmentStep = 0;
+                
+                // Animation settings
+                const animationInterval = 50; 
+                const totalAnimationDuration = 12000; // Increased to 12s
+                const totalSteps = Math.ceil(totalAnimationDuration / animationInterval);
+                let currentTotalStep = 0;
+
+                const animInterval = setInterval(() => {
+                    if (currentPathIdx >= pathLength - 1) {
+                        clearInterval(animInterval);
+                        ambulanceMarker.current.setPosition(route[pathLength - 1]);
+                        setEtaSeconds(0);
+                        if (callback) callback();
+                        return;
+                    }
+
+                    const p1 = route[currentPathIdx];
+                    const p2 = route[currentPathIdx + 1];
+
+                    currentSegmentStep++;
+                    currentTotalStep++;
+                    
+                    // Sync ETA to animation progress
+                    const remainingMs = Math.max(0, totalAnimationDuration - (currentTotalStep * animationInterval));
+                    setEtaSeconds(Math.ceil(remainingMs / 1000));
+
+                    const stepsPerSegment = Math.max(1, Math.floor(totalSteps / pathLength));
+                    const fraction = currentSegmentStep / stepsPerSegment;
+
+                    const curLat = p1.lat() + (p2.lat() - p1.lat()) * fraction;
+                    const curLng = p1.lng() + (p2.lng() - p1.lng()) * fraction;
+                    const curPos = { lat: curLat, lng: curLng };
+
+                    ambulanceMarker.current.setPosition(curPos);
+
+                    // Dynamic signal clearing
+                    signalMarkers.forEach(sig => {
+                        if (!sig.cleared) {
+                            const dist = window.google.maps.geometry.spherical.computeDistanceBetween(
+                                new window.google.maps.LatLng(curLat, curLng),
+                                sig.marker.getPosition()
+                            );
+                            if (dist < 150) { 
+                                sig.cleared = true;
+                                sig.marker.setIcon({
+                                    path: window.google.maps.SymbolPath.CIRCLE,
+                                    scale: 8,
+                                    fillColor: isHospitalLeg ? '#3388ff' : '#2ea043',
+                                    fillOpacity: 1,
+                                    strokeColor: '#ffffff',
+                                    strokeWeight: 2,
+                                });
+                                sig.marker.setTitle("Traffic Signal (Cleared)");
+                            }
+                        }
+                    });
+
+                    if (currentSegmentStep >= stepsPerSegment) {
+                        currentSegmentStep = 0;
+                        currentPathIdx++;
+                    }
+                }, animationInterval);
+            } else {
+                console.error('Directions request failed due to ' + status);
+            }
+        });
+    };
+
+    const startGreenCorridor = (result) => {
+        setCorridorActive(true);
+        setCorridorMessage('Routing to Emergency Area — Signals Cleared');
+
+        const destLat = result.lat;
+        const destLng = result.lng;
+        
+        const stationLat = result.ambulance_dispatched ? result.ambulance_dispatched.lat : STATION_LAT;
+        const stationLng = result.ambulance_dispatched ? result.ambulance_dispatched.lng : STATION_LNG;
+
+        // Clear existing markers except the ambulance
+        markersRef.current.forEach(m => m.setMap(null));
+        markersRef.current = [];
+        
+        const dynamicIncidentMarker = new window.google.maps.Marker({
+            position: { lat: destLat, lng: destLng },
+            map: mapInstance.current,
+            icon: {
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: 12,
+                fillColor: '#ff3333',
+                fillOpacity: 0.9,
+                strokeColor: '#ffffff',
+                strokeWeight: 2,
+            }
+        });
+        markersRef.current.push(dynamicIncidentMarker);
+
+        ambulanceMarker.current.setPosition({ lat: stationLat, lng: stationLng });
+
+        // Phase 1: Drive to Incident
+        driveTo({ lat: stationLat, lng: stationLng }, { lat: destLat, lng: destLng }, false, () => {
+            if (result.nearest_hospital) {
+                setCorridorMessage('Patient Picked Up! Rerouting to Nearest Hospital...');
+                setEtaSeconds(0);
+                setTimeout(() => {
+                    setCorridorMessage(`Routing to ${result.nearest_hospital.name} — Green Corridor Active`);
+                    
+                    // Mark hospital
+                    const hospMarker = new window.google.maps.Marker({
+                        position: { lat: result.nearest_hospital.lat, lng: result.nearest_hospital.lng },
+                        map: mapInstance.current,
+                        icon: {
+                            path: window.google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
+                            scale: 6,
+                            fillColor: '#ffffff',
+                            fillOpacity: 1,
+                            strokeColor: '#3388ff',
+                            strokeWeight: 3,
+                        },
+                        title: result.nearest_hospital.name
+                    });
+                    markersRef.current.push(hospMarker);
+                    
+                    // Phase 2: Drive to Hospital
+                    driveTo(
+                        { lat: destLat, lng: destLng },
+                        { lat: result.nearest_hospital.lat, lng: result.nearest_hospital.lng },
+                        true,
+                        () => {
+                            setCorridorMessage('Arrived at Hospital. Mission Complete.');
+                        }
+                    );
+                }, 2000); // 2 second pause before phase 2
+            } else {
+                setCorridorMessage('Arrived at Scene. No Transport Required.');
+            }
+        });
+    };
+
+    useEffect(() => {
+        // Removed old eta timer effect, handled inside driveTo loop now
+    }, []);
+
     useEffect(() => {
         if (etaSeconds > 0) {
             const m = Math.floor(etaSeconds / 60).toString().padStart(2, '0');
             const s = (etaSeconds % 60).toString().padStart(2, '0');
             setEta(`${m}:${s}`);
+        } else if (etaSeconds === 0 && corridorActive) {
+            setEta("00:00");
         }
-    }, [etaSeconds]);
+    }, [etaSeconds, corridorActive]);
 
     return (
         <div>
             <div id="map-container" ref={mapRef}></div>
             
             <TopNav />
-            <Sidebar />
+            <Sidebar incidents={activeEmergencies} />
 
             {/* Banners & ETA */}
             {corridorActive && (
                 <>
                     <div className="green-corridor-banner">
                         <i data-lucide="siren" style={{animation: 'pulse 1s infinite'}}></i>
-                        Green Corridor Activated — 14 Signals Cleared
+                        {corridorMessage}
                     </div>
                     
-                    <div className="eta-box">
-                        <div className="eta-label">Estimated Arrival</div>
-                        <div className={`eta-time ${etaSeconds <= 255 ? 'success' : ''}`}>
-                            {eta}
+                    {etaSeconds >= 0 && (
+                        <div className="eta-box">
+                            <div className="eta-label">Estimated Arrival</div>
+                            <div className={`eta-time ${etaSeconds <= 5 ? 'success' : ''}`}>
+                                {eta}
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </>
             )}
 

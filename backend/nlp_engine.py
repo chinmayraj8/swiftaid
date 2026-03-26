@@ -10,27 +10,39 @@ except OSError:
     nlp = None
 
 INCIDENT_KEYWORDS = {
-    "accident": ["crash", "collision", "accident", "hit"],
+    "accident": ["crash", "collision", "accident", "hit", "fall"],
     "fire": ["fire", "burning", "smoke", "flames"],
-    "medical": ["heart", "unconscious", "breathing", "seizure"],
-    "crime": ["theft", "robbery", "attack", "shooting"]
+    "medical": ["heart", "chest", "unconscious", "breathing", "attack", "stroke", "medical", "sick"],
+    "crime": ["theft", "robbery", "attack", "shooting"],
+    "emergency": ["emergency", "urgent", "help", "save"]
 }
 
 SEVERITY_KEYWORDS = {
-    "critical": ["unconscious", "critical", "dying", "not breathing"],
-    "high": ["serious", "severe", "badly", "injured"],
+    "severe": ["serious", "severe", "badly", "injured", "critical", "dying", "unconscious", "not breathing"],
     "medium": ["hurt", "pain", "moderate"],
-    "low": ["minor", "small", "scratch"]
+    "low": ["minor", "small", "scratch", "safe"]
 }
 
-# 5 hardcoded Bangalore ambulance stations
+import os
+import requests
+
+# 12 Mock Bangalore ambulance stations deployed organically
 AMBULANCE_STATIONS = [
-    {"name": "Malleswaram General Hospital Ambulance", "lat": 13.0068, "lng": 77.5702},
-    {"name": "St John's Ambulance Service Koramangala", "lat": 12.9279, "lng": 77.6271},
-    {"name": "Manipal Hospital Indiranagar Station", "lat": 12.9784, "lng": 77.6408},
-    {"name": "Jayanagar Government Hospital Ambulance", "lat": 12.9299, "lng": 77.5824},
-    {"name": "Vydehi Whitefield Station", "lat": 12.9698, "lng": 77.7499}
+    {"name": "Malleswaram Gen Hosp Base", "lat": 13.0068, "lng": 77.5702},
+    {"name": "St John's Koramangala Base", "lat": 12.9279, "lng": 77.6271},
+    {"name": "Manipal Indiranagar Base", "lat": 12.9784, "lng": 77.6408},
+    {"name": "Jayanagar Gov Base", "lat": 12.9299, "lng": 77.5824},
+    {"name": "Vydehi Whitefield Base", "lat": 12.9698, "lng": 77.7499},
+    {"name": "Yelahanka North Base", "lat": 13.1006, "lng": 77.5963},
+    {"name": "Banashankari South Base", "lat": 12.9152, "lng": 77.5735},
+    {"name": "BTM Layout Station", "lat": 12.9165, "lng": 77.6101},
+    {"name": "Hebbal Station", "lat": 13.0354, "lng": 77.5988},
+    {"name": "Rajajinagar Station", "lat": 12.9981, "lng": 77.5504},
+    {"name": "Electronic City Base", "lat": 12.8399, "lng": 77.6770},
+    {"name": "Peenya Base", "lat": 13.0285, "lng": 77.5197}
 ]
+
+
 
 def parse_emergency(text: str) -> dict:
     text_lower = text.lower()
@@ -55,6 +67,14 @@ def parse_emergency(text: str) -> dict:
             matched_sev_keywords = matches
             severity = s_level
             
+    # As per rules: Emergencies, accidents, fires, and medical emergencies are automatically Severe
+    if incident_type in ["accident", "fire", "emergency", "medical"]:
+        severity = "severe"
+        
+    # Establish strict fallback Severity logic if exact dict words weren't spoken 
+    if severity == "unknown":
+        severity = "medium" # Safe default
+        
     # Calculate confidence based on number of keywords matched
     # Starts safely at 0.70, maxing out at 0.99
     total_matches = matched_type_keywords + matched_sev_keywords
@@ -65,37 +85,39 @@ def parse_emergency(text: str) -> dict:
     if nlp is not None:
         doc = nlp(text)
         # Look for GPE (Geopolitical Entity) or LOC (Location) entities
-        locations = [ent.text for ent in doc.ents if ent.label_ in ("GPE", "LOC")]
+        locations = [ent.text for ent in doc.ents if ent.label_ in ("GPE", "LOC", "FAC")]
         if locations:
             location_name = locations[0]
             
-    # Mock hardcoded locations to coordinates for pipeline demo
-    DUMMY_LOCATIONS = {
-        "koramangala": {"lat": 12.9279, "lng": 77.6271},
-        "indiranagar": {"lat": 12.9784, "lng": 77.6408},
-        "malleswaram": {"lat": 13.0068, "lng": 77.5702},
-        "jayanagar": {"lat": 12.9299, "lng": 77.5824},
-        "whitefield": {"lat": 12.9698, "lng": 77.7499},
-        "electronic city": {"lat": 12.8452, "lng": 77.6602},
-        "hsr layout": {"lat": 12.9121, "lng": 77.6446},
-    }
-    
-    # Default to center of Bangalore
+    # Default fallback to center of Bangalore
     lat = 12.9716
     lng = 77.5946
     
-    # Try text matching for simple dummy mappings
-    for loc, coords in DUMMY_LOCATIONS.items():
-        if loc in text_lower:
+    # Live Geocoding Hook (Google Maps API) natively parsing string strings dynamically!
+    api_key = os.environ.get("GOOGLE_API_KEY", "AIzaSyBc1M5w65iTwQN3KjygX67BinOWse4u4-Y")
+    
+    # Use NLP literal location if found cleanly, else dump the whole text query to Google's semantic parser backend!
+    query = location_name if location_name != "Unknown location" else text
+    
+    try:
+        url = f"https://maps.googleapis.com/maps/api/geocode/json?address={query}+Bangalore&key={api_key}"
+        res = requests.get(url, timeout=5).json()
+        if res.get("status") == "OK":
+            lat = res["results"][0]["geometry"]["location"]["lat"]
+            lng = res["results"][0]["geometry"]["location"]["lng"]
+            # Extract formatted address bounds perfectly
             if location_name == "Unknown location":
-                location_name = loc.title()
-            lat = coords["lat"]
-            lng = coords["lng"]
-            break
-            
+                location_name = res["results"][0]["formatted_address"].split(',')[0] # Grab just literal road segment
+    except Exception:
+        pass
+        
+    # Reroute to hospital only for medical and accident cases; Fire/Crime stay on-scene
+    requires_hospital = (severity == "severe") and (incident_type not in ["fire", "crime"])
+        
     return {
         "incident_type": incident_type,
         "severity": severity,
+        "requires_hospital": requires_hospital,
         "location_name": location_name,
         "lat": lat,
         "lng": lng,
@@ -103,21 +125,41 @@ def parse_emergency(text: str) -> dict:
     }
 
 def get_nearest_ambulance(lat: float, lng: float) -> dict:
-    """Returns the nearest mock ambulance station based on provided coordinates"""
-    if not AMBULANCE_STATIONS:
-        return None
-        
-    nearest = None
-    min_dist = float('inf')
+    """Returns the nearest mock ambulance base calculating true fastest route durations using Google Maps Distance Matrix"""
+    if not AMBULANCE_STATIONS: return None
     
-    for station in AMBULANCE_STATIONS:
-        # Using simple Euclidean distance for mock functionality
-        dist = math.dist((lat, lng), (station["lat"], station["lng"]))
-        if dist < min_dist:
-            min_dist = dist
-            nearest = station
-            
-    return nearest
+    # Calculate Haversine
+    def haversine(l1, ln1, l2, ln2):
+        dlat = math.radians(l2 - l1)
+        dlon = math.radians(ln2 - ln1)
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(l1)) * math.cos(math.radians(l2)) * math.sin(dlon/2)**2
+        return 2 * 6371 * math.asin(math.sqrt(a))
+        
+    candidates = sorted(AMBULANCE_STATIONS, key=lambda s: haversine(lat, lng, s["lat"], s["lng"]))[:3]
+    
+    api_key = os.environ.get("GOOGLE_API_KEY", "AIzaSyBc1M5w65iTwQN3KjygX67BinOWse4u4-Y")
+    dests = "|".join([f"{c['lat']},{c['lng']}" for c in candidates])
+    
+    try:
+        # Distance Matrix calculating real route time from ambulance to incident coordinate
+        url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={dests}&destinations={lat},{lng}&departure_time=now&key={api_key}"
+        res = requests.get(url, timeout=5).json()
+        
+        if res.get("status") == "OK":
+            best_amb, min_dur = None, float('inf')
+            # Extract across multiple origins pointing to 1 destination
+            for i, row in enumerate(res["rows"]):
+                el = row["elements"][0]
+                if el.get("status") == "OK":
+                    val = el.get("duration_in_traffic", el.get("duration", {})).get("value", float('inf'))
+                    if val < min_dur:
+                        min_dur = val
+                        best_amb = candidates[i]
+            if best_amb: return best_amb
+    except Exception:
+        pass
+        
+    return candidates[0]
 
 def voice_to_text():
     """Records voice from microphone and converts to text"""

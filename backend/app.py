@@ -6,6 +6,7 @@ from datetime import datetime
 import nlp_engine
 import corridor
 import predictor
+import hospitals
 
 app = FastAPI(title="SwiftAid")
 
@@ -36,6 +37,24 @@ def read_root():
 def dispatch(request: DispatchRequest):
     # Calls parse_emergency from nlp_engine
     result = nlp_engine.parse_emergency(request.text)
+    
+    # Get nearest ambulance
+    dest_lat = result.get("lat")
+    dest_lng = result.get("lng")
+    if dest_lat and dest_lng:
+        ambulance = nlp_engine.get_nearest_ambulance(dest_lat, dest_lng)
+        if ambulance:
+            result["ambulance_dispatched"] = ambulance
+
+        # ONLY fetch and append real-world hospital locations if severity is severe!
+        if result.get("severity") == "severe":
+            try:
+                # Always computes using absolute coordinates and Google places!
+                result["nearest_hospital"] = hospitals.get_nearest_hospital(dest_lat, dest_lng)
+            except Exception as e:
+                # Do not guess!
+                result["nearest_hospital_error"] = str(e)
+            
     return {"result": result}
 
 @app.post("/corridor")
@@ -87,6 +106,16 @@ def get_hotspots():
     high_risk_zones = predictor.predict_hotspots()
     return {"hotspots": high_risk_zones[:5]}
 
+@app.get("/hospitals")
+def extract_all_real_hospitals():
+    """Returns the strict database of authentically mapped Google Places Hospitals."""
+    from fastapi import HTTPException
+    try:
+        hosts = hospitals.fetch_real_hospitals()
+        return {"count": len(hosts), "hospitals": hosts}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/voice-dispatch")
 def voice_dispatch():
     """Accepts a voice call and processes it as an emergency"""
@@ -115,3 +144,7 @@ def voice_dispatch():
         result["corridor"] = corridor_data
         
     return result
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
