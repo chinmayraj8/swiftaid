@@ -86,3 +86,32 @@ def get_hotspots():
     # Calls predict_hotspots from predictor.py and returns top 5 high risk zones
     high_risk_zones = predictor.predict_hotspots()
     return {"hotspots": high_risk_zones[:5]}
+
+@app.post("/voice-dispatch")
+def voice_dispatch():
+    """Accepts a voice call and processes it as an emergency"""
+    result = nlp_engine.process_voice_emergency()
+    
+    if "error" in result:
+        return result
+        
+    # Get parsed incident coordinates
+    dest_lat = result.get("lat", 12.9716)
+    dest_lng = result.get("lng", 77.5946)
+    
+    # 1. Dispatch nearest ambulance
+    ambulance = nlp_engine.get_nearest_ambulance(dest_lat, dest_lng)
+    
+    if ambulance:
+        result["ambulance_dispatched"] = ambulance
+        
+        # 2. Clear corridor path
+        corridor_data = corridor.generate_corridor(
+            origin_lat=ambulance["lat"],
+            origin_lng=ambulance["lng"],
+            dest_lat=dest_lat,
+            dest_lng=dest_lng
+        )
+        result["corridor"] = corridor_data
+        
+    return result
