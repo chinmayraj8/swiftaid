@@ -1,0 +1,85 @@
+{
+  "app": {
+    "name": "SwiftAID Emergency Response Dashboard",
+    "version": "1.0.0",
+    "description": "Real-time emergency response coordination system with map visualization"
+  },
+  "map": {
+    "center": {
+      "latitude": 12.9716,
+      "longitude": 77.5946,
+      "label": "Bangalore, India"
+    },
+    "defaultZoom": 12,
+    "minZoom": 8,
+    "maxZoom": 19,
+    "tileProvider": "OpenStreetMap"
+  },
+  "api": {
+    "backend": "http://localhost:8000",
+    "endpoints": {
+      "incidents": "/incidents",
+      "hotspots": "/hotspots",
+      "dispatch": "/dispatch",
+      "corridor": "/corridor"
+    },
+    "timeout": 10000
+  },
+  "refresh": {
+    "autoRefreshEnabled": true,
+    "autoRefreshInterval": 30000,
+    "description": "Interval in milliseconds (30000ms = 30 seconds)"
+  },
+  "severity": {
+    "levels": {
+      "critical": {
+        "color": "#dc2626",
+        "priority": 1,
+        "icon": "fa-exclamation",
+        "responseTime": "2-5 minutes"
+      },
+      "high": {
+        "color": "#ea580c",
+        "priority": 2,
+        "icon": "fa-warning",
+        "responseTime": "5-15 minutes"
+      },
+      "medium": {
+        "color": "#eab308",
+        "priority": 3,
+        "icon": "fa-info-circle",
+        "responseTime": "15-30 minutes"
+      }
+    }
+  },
+  "hotspots": {
+    "color": "#7c3aed",
+    "radius": 500,
+    "radiusUnit": "meters",
+    "opacity": 0.15
+  },
+  "markers": {
+    "size": 32,
+    "borderWidth": 3,
+    "borderColor": "white",
+    "shadow": "0 2px 8px rgba(0,0,0,0.3)"
+  },
+  "ui": {
+    "sidebarWidth": 350,
+    "theme": "light",
+    "sidebarPosition": "right",
+    "animation": true
+  },
+  "notifications": {
+    "displayDuration": 4000,
+    "position": "top-right"
+  },
+  "features": {
+    "sosButton": true,
+    "incidentList": true,
+    "statistics": true,
+    "legend": true,
+    "refreshButton": true,
+    "autoClose": false
+  }
+}
